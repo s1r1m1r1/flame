@@ -178,7 +178,7 @@ Future<TextureAtlasData> _fromAssets(
     );
   } on Exception catch (e, stack) {
     Error.throwWithStackTrace(
-      Exception('Error loading $assetsPrefix$path from assets: $e'),
+      Exception('Error loading $path (prefix: $assetsPrefix) from assets: $e'),
       stack,
     );
   }
@@ -229,9 +229,41 @@ Future<TextureAtlasData> _parse(
   final regions = <Region>[];
   var hasIndexes = false;
 
-  final fileContent = fromStorage
-      ? await XFile(path).readAsString()
-      : await (assets ?? Flame.assets).readFile('${assetsPrefix!}/$path');
+  String fullPath;
+  if (fromStorage) {
+    fullPath = path;
+  } else {
+    String prefix = (assetsPrefix ?? '').trim();
+    String cleanPath = path.trim();
+
+    // Remove leading slash from path if it exists
+    if (cleanPath.startsWith('/')) {
+      cleanPath = cleanPath.substring(1);
+    }
+
+    if (prefix.isEmpty) {
+      fullPath = cleanPath;
+    } else {
+      if (prefix.endsWith('/')) {
+        fullPath = '$prefix$cleanPath';
+      } else {
+        fullPath = '$prefix/$cleanPath';
+      }
+    }
+  }
+
+  final String fileContent;
+  if (fromStorage) {
+    fileContent = await XFile(fullPath).readAsString();
+  } else {
+    final assetPath =
+        (fullPath.startsWith('assets/') ||
+            fullPath.startsWith('packages/') ||
+            fullPath.startsWith('/'))
+        ? fullPath
+        : 'assets/$fullPath';
+    fileContent = await (assets ?? Flame.assets).bundle.loadString(assetPath);
+  }
 
   final lines = LineSplitter.split(
     fileContent,
@@ -241,7 +273,14 @@ Future<TextureAtlasData> _parse(
   images ??= Flame.images;
 
   while (lineQueue.isNotEmpty) {
-    final page = await _parsePage(lineQueue, path, fromStorage, images);
+    final page = await _parsePage(
+      lineQueue,
+      path,
+      fromStorage,
+      images,
+      assetsPrefix: assetsPrefix,
+      assets: assets,
+    );
     pages.add(page);
 
     // Parse regions for this page until we hit another page or end of file
@@ -308,8 +347,10 @@ Future<Page> _parsePage(
   ListQueue<String> lineQueue,
   String path,
   bool fromStorage,
-  Images images,
-) async {
+  Images images, {
+  String? assetsPrefix,
+  AssetsCache? assets,
+}) async {
   final page = Page();
   page.textureFile = lineQueue.removeFirst();
 
@@ -324,7 +365,41 @@ Future<Page> _parsePage(
     images.add(texturePath, image);
     page.texture = images.fromCache(texturePath);
   } else {
-    page.texture = await images.load(texturePath);
+    String fullTexturePath;
+    String prefix = (assetsPrefix ?? '').trim();
+    String cleanPath = texturePath.trim();
+
+    if (cleanPath.startsWith('/')) {
+      cleanPath = cleanPath.substring(1);
+    }
+
+    if (prefix.isEmpty) {
+      fullTexturePath = cleanPath;
+    } else {
+      if (prefix.endsWith('/')) {
+        fullTexturePath = '$prefix$cleanPath';
+      } else {
+        fullTexturePath = '$prefix/$cleanPath';
+      }
+    }
+
+    if (images.containsKey(fullTexturePath)) {
+      page.texture = images.fromCache(fullTexturePath);
+    } else {
+      // Check if we need to prepend 'assets/' if not already there and not a absolute path
+      // Actually Flame.assets.bundle.load expects paths relative to project root (usually starting with 'assets/' or 'packages/')
+      // If fullTexturePath already starts with 'assets/' or 'packages/', we use it as is.
+      final assetPath =
+          (fullTexturePath.startsWith('assets/') ||
+              fullTexturePath.startsWith('packages/'))
+          ? fullTexturePath
+          : 'assets/$fullTexturePath';
+
+      final data = await (assets ?? Flame.assets).bundle.load(assetPath);
+      final image = await decodeImageFromList(data.buffer.asUint8List());
+      images.add(fullTexturePath, image);
+      page.texture = images.fromCache(fullTexturePath);
+    }
   }
 
   _parsePageProperties(lineQueue, page);
