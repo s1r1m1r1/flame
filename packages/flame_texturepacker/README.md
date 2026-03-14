@@ -56,7 +56,47 @@ Import the plugin like this:
 Load the TextureAtlas passing the path of the sprite sheet atlas file:
 
 ```Dart
-final atlas = await atlasFromAssets('atlas_map.atlas');
+final atlas = await TexturePackerAtlas.load('atlas_map.atlas');
+```
+
+### Loading from a Package
+
+To load an atlas from another Flutter package, use the `package` parameter:
+
+```Dart
+final atlas = await TexturePackerAtlas.load(
+  'atlas_map.atlas',
+  package: 'my_assets_package',
+);
+```
+
+### Paths and Prefixes
+
+By default, `TexturePackerAtlas.load` looks for files in `assets/images/`. This is controlled by the `assetsPrefix` parameter, which defaults to `'images'`.
+
+#### 1. Default usage (relative to `assets/images/`)
+```dart
+// Path: assets/images/hero.atlas
+final atlas = await TexturePackerAtlas.load('hero.atlas');
+```
+
+#### 2. Custom prefix (relative to `assets/`)
+```dart
+// Path: assets/atlases/hero.atlas
+final atlas = await TexturePackerAtlas.load(
+  'hero.atlas',
+  assetsPrefix: 'atlases',
+);
+```
+
+#### 3. Full path (stripping standard prefix)
+If you provide a path that already includes the standard `assets/` prefix, the library will automatically strip it to avoid duplication.
+```dart
+// Path: assets/images/mega_explosions.atlas
+final atlas = await TexturePackerAtlas.load(
+  'assets/images/mega_explosions.atlas',
+  assetsPrefix: '',
+);
 ```
 
 
@@ -81,7 +121,10 @@ If you are using file storage, grab your atlas file like this:
 
 ```Dart
 final documentsPath = (await getApplicationDocumentsDirectory()).path;
-final atlas = await atlasFromStorage('$documentsPath/atlas_map.atlas');
+final atlas = await TexturePackerAtlas.load(
+  '$documentsPath/atlas_map.atlas',
+  fromStorage: true,
+);
 ```
 
 Get a list of sprites ordered by their index, you can use the list to generate an animation:
@@ -94,6 +137,22 @@ final animation = SpriteAnimation.spriteList(
  stepTime: 0.1,
  loop: true,
 );
+```
+
+Or use the convenience method `getAnimation`:
+
+```Dart
+final animation = atlas.getAnimation('robot_walk', stepTime: 0.1, loop: true);
+```
+
+If your atlas contains multiple animations, load it once and reuse it:
+
+```Dart
+final atlas = await TexturePackerAtlas.load('atlas_map.atlas');
+
+final walkAnim = atlas.getAnimation('robot_walk');
+final runAnim  = atlas.getAnimation('robot_run');
+final jumpAnim = atlas.getAnimation('robot_jump', loop: false);
 ```
 
 Get individual sprites by name:
@@ -112,8 +171,8 @@ final idleSprite = atlas.findSpriteByName('robot_idle')!;
 | Allow Rotation     | YES       |
 | Multiple Pages     | YES       |
 | Use indices        | YES       |
-| Strip whitespace X | NO        |
-| Strip whitespace Y | NO        |
+| Strip whitespace X | YES       |
+| Strip whitespace Y | YES       |
 
 
 ## Example

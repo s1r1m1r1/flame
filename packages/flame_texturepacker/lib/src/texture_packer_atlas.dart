@@ -6,7 +6,9 @@ import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:cross_file/cross_file.dart';
 import 'package:flame/cache.dart';
+import 'package:flame/components.dart';
 import 'package:flame/flame.dart';
+import 'package:flame/game.dart';
 import 'package:flame_texturepacker/src/model/page.dart';
 import 'package:flame_texturepacker/src/model/region.dart';
 import 'package:flame_texturepacker/src/texture_packer_sprite.dart';
@@ -159,6 +161,64 @@ class TexturePackerAtlas {
         )
         .toList();
   }
+
+  /// Creates a [SpriteAnimation] from sprites with the given name.
+  ///
+  /// [name] - The name of the sprites to use for the animation
+  /// [stepTime] - The duration to display each frame, in seconds
+  /// [loop] - Whether the animation should loop
+  SpriteAnimation getAnimation(
+    String name, {
+    double stepTime = 0.1,
+    bool loop = true,
+  }) {
+    final animationSprites = findSpritesByName(name);
+    if (animationSprites.isEmpty) {
+      throw Exception('No sprites found with name "$name" in atlas');
+    }
+    return SpriteAnimation.spriteList(
+      animationSprites,
+      stepTime: stepTime,
+      loop: loop,
+    );
+  }
+}
+
+extension TexturepackerLoader on Game {
+  /// Loads the specified pack file from assets
+  /// Uses the parent directory of the pack file to find the page images.
+  Future<TexturePackerAtlas> atlasFromAssets(
+    String assetsPath, {
+    Images? images,
+    AssetsCache? assets,
+    bool useOriginalSize = true,
+    List<String> whiteList = const [],
+    String assetsPrefix = 'images',
+    String? package,
+  }) async => TexturePackerAtlas.load(
+    assetsPath,
+    images: images ?? this.images,
+    assets: assets ?? this.assets,
+    useOriginalSize: useOriginalSize,
+    whiteList: whiteList,
+    assetsPrefix: assetsPrefix,
+    package: package,
+  );
+
+  /// Loads the specified pack file from storage
+  /// Uses the parent directory of the pack file to find the page images.
+  Future<TexturePackerAtlas> atlasFromStorage(
+    String storagePath, {
+    Images? images,
+    bool useOriginalSize = true,
+    List<String> whiteList = const [],
+  }) async => TexturePackerAtlas.load(
+    storagePath,
+    fromStorage: true,
+    images: images ?? this.images,
+    useOriginalSize: useOriginalSize,
+    whiteList: whiteList,
+  );
 }
 
 /// Loads texture atlas data from application assets.
@@ -508,11 +568,12 @@ void _parsePageProperties(ListQueue<String> lineQueue, Page page) {
 ///
 /// Returns the parsed [Region].
 Region _parseRegion(ListQueue<String> lineQueue, Page page) {
-  var name = lineQueue.removeFirst().trim();
+  final originalName = lineQueue.removeFirst().trim();
+  var name = originalName;
   var extractedIndex = -1;
 
   // Attempt to extract index and clean name if it follows patterns like
-  // 'name_01.png' or 'name_01'
+  // 'name_01.png', 'name_01', 'name01.png' or 'name01'
   final extensionMatch = RegExp(
     r'\.(png|jpg|jpeg|bmp|tga|webp)$',
     caseSensitive: false,
@@ -521,14 +582,19 @@ Region _parseRegion(ListQueue<String> lineQueue, Page page) {
     name = name.substring(0, extensionMatch.start);
   }
 
-  final indexMatch = RegExp(r'_(\d+)$').firstMatch(name);
+  final nameBeforeIndex = name;
+
+  // Matches any numeric suffix (with optional underscore).
+  final indexMatch = RegExp(r'(_?)(\d+)$').firstMatch(name);
   if (indexMatch != null) {
     try {
-      extractedIndex = int.parse(indexMatch.group(1)!);
+      extractedIndex = int.parse(indexMatch.group(2)!);
       name = name.substring(0, indexMatch.start);
-      // ignore: avoid_catches_without_on_clauses
-    } catch (_) {
-      // Ignore parsing errors for very large numbers
+    } on Object {
+      throw FormatException(
+        'Failed to parse index from sprite name "$name". '
+        'Ensure the numeric suffix fits within an integer range.',
+      );
     }
   }
 
@@ -552,6 +618,11 @@ Region _parseRegion(ListQueue<String> lineQueue, Page page) {
     lineQueue.removeFirst();
   }
 
+  final indexValue = values['index'];
+  if (indexValue != null) {
+    extractedIndex = int.parse(indexValue[0]);
+  }
+
   final xy = values['xy'];
   final size = values['size'];
   final bounds = values['bounds'];
@@ -559,7 +630,6 @@ Region _parseRegion(ListQueue<String> lineQueue, Page page) {
   final orig = values['orig'];
   final offsets = values['offsets'];
   final rotate = values['rotate'];
-  final index = values['index'];
 
   final offsetOrNull = offsets ?? offset;
 
@@ -578,9 +648,12 @@ Region _parseRegion(ListQueue<String> lineQueue, Page page) {
 
   final finalOriginalHeight = originalHeight == 0.0 ? null : originalHeight;
 
+  final finalIndex = extractedIndex;
+  final finalName = finalIndex == -1 ? nameBeforeIndex : name;
+
   return Region(
     page: page,
-    name: name,
+    name: finalName,
     left: bounds != null
         ? double.parse(bounds[0])
         : (xy != null ? double.parse(xy[0]) : 0.0),
@@ -599,7 +672,7 @@ Region _parseRegion(ListQueue<String> lineQueue, Page page) {
     originalHeight: finalOriginalHeight,
     degrees: _parseDegrees(rotate?.first),
     rotate: _parseDegrees(rotate?.first) == 90,
-    index: index != null ? int.parse(index[0]) : extractedIndex,
+    index: finalIndex,
   );
 }
 
