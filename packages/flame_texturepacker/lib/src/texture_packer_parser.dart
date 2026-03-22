@@ -129,20 +129,27 @@ abstract class TexturePackerParser {
         page.texture = img.fromCache(texturePath);
       } else {
         final resolved = resolvePath(texturePath, package);
-        final assetsCachePrefix = (assets ?? Flame.assets).prefix;
+        var finalTexturePath = resolved.path;
 
-        String toRelative(String p) => p.startsWith(assetsCachePrefix)
-            ? p.substring(assetsCachePrefix.length)
-            : p;
-
-        final relativePath = toRelative(resolved.path);
-        final relativePrefix = toRelative(img.prefix);
-
-        final finalTexturePath =
-            (relativePrefix.isNotEmpty &&
-                relativePath.startsWith(relativePrefix))
-            ? relativePath.substring(relativePrefix.length)
-            : relativePath;
+        // Strip the image prefix from the resolved path
+        // if it's there to avoid double-prefixing.
+        final prefix = img.prefix;
+        if (prefix.isNotEmpty) {
+          final cleanPrefix = prefix.endsWith('/') ? prefix : '$prefix/';
+          if (finalTexturePath.startsWith(cleanPrefix)) {
+            finalTexturePath = finalTexturePath.substring(cleanPrefix.length);
+          } else {
+            // Also check for prefix without 'assets/' if it's there
+            final relativePrefix = cleanPrefix.startsWith('assets/')
+                ? cleanPrefix.substring(7)
+                : cleanPrefix;
+            if (finalTexturePath.startsWith(relativePrefix)) {
+              finalTexturePath = finalTexturePath.substring(
+                relativePrefix.length,
+              );
+            }
+          }
+        }
 
         page.texture = await img.load(
           finalTexturePath,
@@ -183,6 +190,7 @@ abstract class TexturePackerParser {
   static Region _parseRegion(ListQueue<String> lineQueue, Page page) {
     final originalName = lineQueue.removeFirst().trim();
     var name = originalName;
+    var extractedIndex = -1;
 
     final extensionMatch = RegExp(
       r'\.(png|jpg|jpeg|bmp|tga|webp)$',
@@ -192,6 +200,7 @@ abstract class TexturePackerParser {
       name = name.substring(0, extensionMatch.start);
     }
 
+    final nameBeforeIndex = name;
     final values = <String, List<String>>{};
 
     while (lineQueue.isNotEmpty) {
@@ -209,6 +218,11 @@ abstract class TexturePackerParser {
 
       values[entry[0]] = entry.sublist(1);
       lineQueue.removeFirst();
+    }
+
+    final indexValue = values['index'];
+    if (indexValue != null) {
+      extractedIndex = int.parse(indexValue[0]);
     }
 
     final xy = values['xy'];
@@ -237,11 +251,19 @@ abstract class TexturePackerParser {
 
     final finalOriginalHeight = originalHeight == 0.0 ? null : originalHeight;
 
-    final finalIndex = index != null ? int.parse(index[0]) : -1;
+    final finalIndex = index != null ? int.parse(index[0]) : extractedIndex;
+    var finalName = nameBeforeIndex;
+
+    if (index != null && finalIndex != -1) {
+      final indexMatch = RegExp(r'(_?)(\d+)$').firstMatch(finalName);
+      if (indexMatch != null) {
+        finalName = finalName.substring(0, indexMatch.start);
+      }
+    }
 
     return Region(
       page: page,
-      name: name,
+      name: finalName,
       left: bounds != null
           ? double.parse(bounds[0])
           : (xy != null ? double.parse(xy[0]) : 0.0),

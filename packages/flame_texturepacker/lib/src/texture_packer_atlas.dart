@@ -15,8 +15,40 @@ class TexturePackerAtlas {
   /// List of all sprites contained in this atlas.
   final List<TexturePackerSprite> sprites;
 
+  late final Map<String, List<TexturePackerSprite>> _spriteMap;
+
   /// Creates a new [TexturePackerAtlas] with the given [sprites].
-  TexturePackerAtlas(this.sprites);
+  TexturePackerAtlas(this.sprites) {
+    _initCache();
+  }
+
+  /// sort sprites by name and index
+  /// init cache for O(1) sprite lookup
+  void _initCache() {
+    _spriteMap = {};
+    final fuzzyPattern = RegExp(r'^(.+?)(_?\d+)$');
+
+    for (final sprite in sprites) {
+      final name = sprite.region.name;
+
+      // 1. Exact match
+      (_spriteMap[name] ??= []).add(sprite);
+
+      // 2. Fuzzy match (base name)
+      final match = fuzzyPattern.firstMatch(name);
+      if (match != null) {
+        final baseName = match.group(1)!;
+        if (baseName != name) {
+          (_spriteMap[baseName] ??= []).add(sprite);
+        }
+      }
+    }
+
+    // Sort all groups by index
+    for (final group in _spriteMap.values) {
+      group.sort((a, b) => a.region.index.compareTo(b.region.index));
+    }
+  }
 
   /// Creates a [TexturePackerAtlas] from parsed atlas data.
   ///
@@ -29,22 +61,18 @@ class TexturePackerAtlas {
     List<String> whiteList = const [],
     bool useOriginalSize = true,
   }) {
-    return TexturePackerAtlas(
-      atlasData.regions
-          .where(
-            (e) {
-              return whiteList.isEmpty ||
-                  whiteList.any((key) => e.name.contains(key));
-            },
-          )
-          .map(
-            (e) => TexturePackerSprite(
-              e,
-              useOriginalSize: useOriginalSize,
-            ),
-          )
-          .toList(),
-    );
+    final List<TexturePackerSprite> sprites = [];
+    for (final e in atlasData.regions) {
+      if (whiteList.isEmpty || whiteList.any((key) => e.name.contains(key))) {
+        sprites.add(
+          TexturePackerSprite(
+            e,
+            useOriginalSize: useOriginalSize,
+          ),
+        );
+      }
+    }
+    return TexturePackerAtlas(sprites);
   }
 
   /// Loads a texture atlas from a file path.
@@ -120,8 +148,6 @@ class TexturePackerAtlas {
           fromStorage: fromStorage,
           images: images,
           package: package,
-          assetsPrefix: assetsPrefix,
-          assets: assets,
         );
       }
       return atlasData;
@@ -141,9 +167,7 @@ class TexturePackerAtlas {
   /// Returns the first [TexturePackerSprite] with the given name
   /// or null if not found.
   TexturePackerSprite? findSpriteByName(String name) {
-    return sprites.firstWhereOrNull(
-      (e) => e.region.name == name,
-    );
+    return _spriteMap[name]?.firstOrNull;
   }
 
   /// Finds a sprite by its name and index.
@@ -154,8 +178,8 @@ class TexturePackerAtlas {
   /// Returns the [TexturePackerSprite] with the given name and index
   /// or null if not found.
   TexturePackerSprite? findSpriteByNameIndex(String name, int index) {
-    return sprites.firstWhereOrNull(
-      (sprite) => sprite.region.name == name && sprite.region.index == index,
+    return _spriteMap[name]?.firstWhereOrNull(
+      (sprite) => sprite.region.index == index,
     );
   }
 
@@ -164,28 +188,37 @@ class TexturePackerAtlas {
   /// [name] - The name of the sprites to find
   ///
   /// Returns a list of all [TexturePackerSprite]s with the given name.
+  /// If no exact match is found, it attempts to find sprites that look like
+  /// indexed animation frames (e.g., "walk1", "walk_2") for that name.
+  /// get sprites immediately (no search), O(1)
   List<TexturePackerSprite> findSpritesByName(String name) {
-    return sprites
-        .where(
-          (sprite) => sprite.region.name == name,
-        )
-        .toList();
+    return _spriteMap[name] ?? [];
   }
 
-  /// Creates a [SpriteAnimation] from sprites with the given name.
-  ///
   /// [name] - The name of the sprites to use for the animation
+  ///
   /// [stepTime] - The duration to display each frame, in seconds
+  ///
   /// [loop] - Whether the animation should loop
+  ///
+  /// [useIndexedSpritesOnly] - Whether to use only indexed sprites
+  /// for the animation. If true, sprites with index -1 will be ignored.
   SpriteAnimation getAnimation(
     String name, {
     double stepTime = 0.1,
     bool loop = true,
+    bool useIndexedSpritesOnly = true,
   }) {
-    final animationSprites = findSpritesByName(name);
+    var animationSprites = findSpritesByName(name);
     if (animationSprites.isEmpty) {
       throw Exception('No sprites found with name "$name" in atlas');
     }
+    if (useIndexedSpritesOnly) {
+      animationSprites = animationSprites
+          .where((s) => s.region.index >= 0)
+          .toList();
+    }
+
     return SpriteAnimation.spriteList(
       animationSprites,
       stepTime: stepTime,
